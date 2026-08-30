@@ -80,6 +80,11 @@
 
   .stat-row{display:flex;align-items:center;gap:10px;}
   .stat-row .val{font-family:var(--font-mono);width:30px;text-align:right;color:var(--arc);font-size:13px;}
+  .stat-row input[type=number]{
+    width:56px;flex-shrink:0;background:var(--void-2);border:1px solid var(--line);color:var(--text);
+    padding:6px 7px;border-radius:6px;font-family:var(--font-mono);font-size:13px;text-align:center;outline:none;
+  }
+  .stat-row input[type=number]:focus{border-color:var(--arc);}
 
   button.btn{
     font-family:var(--font-display);letter-spacing:.05em;font-size:12.5px;
@@ -97,6 +102,15 @@
   .skill-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
   .skill-row input{flex:1;}
   .skill-row .dice{max-width:90px;font-family:var(--font-mono);}
+
+  .skill-block{background:var(--void-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px;position:relative;}
+  .skill-block .sb-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .skill-block .sb-field{display:flex;flex-direction:column;gap:4px;}
+  .skill-block .sb-field label{font-size:10.5px;color:var(--muted);margin:0;letter-spacing:.02em;}
+  .skill-block .sb-field input, .skill-block .sb-field select{width:100%;}
+  .skill-block .sb-wide{grid-column:span 2;}
+  .skill-block .sb-full{grid-column:1 / -1;}
+  .skill-block .sb-rmv{position:absolute;top:8px;right:10px;background:none;border:none;color:var(--dmg);cursor:pointer;font-size:15px;}
   .rmv{background:none;border:none;color:var(--dmg);cursor:pointer;font-size:16px;padding:0 6px;}
 
   .roster-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-top:18px;}
@@ -179,6 +193,7 @@ const state = { characters: [], bracket: null, tab: 'roster', battleSel: [null,n
 const RANK_COLOR = { S:'#FF3B30', A:'#E63946', B:'#C81E3A', C:'#A31621', D:'#7A1620', F:'#8a7476' };
 const RANK_ORDER = ['S','A','B','C','D','F'];
 const RANK_STAT_CAP = { S:400, A:350, B:300, C:270, D:250, F:220 };
+const GRADE_BONUS = { S:15, A:10, B:5, C:0, D:-5, F:-10 };
 const STAT_LABEL = { sp:'이능력', agi:'민첩', hp:'체력', str:'근력', def:'방어' };
 
 function uid(){ return Math.random().toString(36).slice(2,10)+Date.now().toString(36); }
@@ -294,8 +309,11 @@ function renderCharCard(c){
       </div>
     </div>
     <div class="chips">
-      ${(c.skills||[]).map(s=>`<span class="chip">⚡ ${escapeHtml(s.name)} (${escapeHtml(s.dice)})</span>`).join('')}
-      ${(c.passives||[]).map(p=>`<span class="chip">◇ ${escapeHtml(p.name)}</span>`).join('')}
+      ${(c.skills||[]).map(s=>{
+        const title = [s.desc?`설명: ${s.desc}`:'', s.effect?`부가효과: ${s.effect}`:''].filter(Boolean).join(' / ');
+        return `<span class="chip" title="${escapeHtml(title)}">⚡ ${escapeHtml(s.name)} [${s.grade||'-'}급/${STAT_LABEL[s.stat]||''}] · 판정 ${escapeHtml(s.formula||'')}${s.bonus?`+${s.bonus}`:''} · 쿨 ${s.cooldown ?? 2}턴</span>`;
+      }).join('')}
+      ${(c.passives||[]).map(p=>`<span class="chip" title="${escapeHtml(p.desc||'')}">◇ ${escapeHtml(p.name)}</span>`).join('')}
       ${c.rank==='S' && c.trait && c.trait.name ? `<span class="chip trait">★ 특성: ${escapeHtml(c.trait.name)}</span>` : ''}
     </div>
   </div>`);
@@ -309,25 +327,25 @@ function renderCharCard(c){
 }
 
 function renderCharForm(){
-  state.skillDraft = state.skillDraft && state.skillDraft.length ? state.skillDraft : [{name:'',dice:'1d6'}];
+  state.skillDraft = state.skillDraft && state.skillDraft.length ? state.skillDraft : [{stat:'sp', name:'', grade:'C', desc:'', effect:'', cooldown:2, formula:'1d6', bonus:0}];
   state.passiveDraft = state.passiveDraft && state.passiveDraft.length ? state.passiveDraft : [{name:'',desc:''}];
   const panel = el(`<div class="panel">
     <h2 class="section">새 헌터 등록</h2>
-    <div class="hint">스탯은 0~100 범위, 등급은 S/A/B/C/D/F. 등급별 스탯 합산 상한: S 400 · A 350 · B 300 · C 270 · D 250 · F 220. 액티브 스킬·패시브 스킬 각각 최대 5개까지 등록 가능합니다. 주사위 표기는 "2d6" 형식으로 입력하세요.</div>
+    <div class="hint">스탯은 0~100 범위, 등급은 S/A/B/C/D/F. 등급별 스탯 합산 상한: S 400 · A 350 · B 300 · C 270 · D 250 · F 220. 액티브 스킬·패시브 스킬 각각 최대 5개까지 등록 가능합니다. 판정 칸의 주사위 표기는 "2d6" 형식으로 입력하세요.</div>
     <div class="grid2">
       <div class="field"><label>이름</label><input type="text" id="f-name" placeholder="헌터 이름"></div>
       <div class="field"><label>등급</label>
         <select id="f-rank">${RANK_ORDER.map(r=>`<option value="${r}">${r}급 (스탯 상한 ${RANK_STAT_CAP[r]})</option>`).join('')}</select>
       </div>
     </div>
-    <div class="field"><label>스탯</label>
+    <div class="field"><label>스탯 (슬라이더 또는 숫자 직접 입력, 0~100)</label>
       <div class="grid5" id="f-stats">
         ${Object.entries(STAT_LABEL).map(([k,label])=>`
           <div>
             <label style="margin-bottom:2px">${label}</label>
             <div class="stat-row">
-              <input type="range" min="1" max="100" value="50" data-stat="${k}">
-              <span class="val" data-statval="${k}">50</span>
+              <input type="range" min="0" max="100" value="50" data-stat="${k}">
+              <input type="number" min="0" max="100" value="50" data-statnum="${k}">
             </div>
           </div>`).join('')}
       </div>
@@ -360,10 +378,17 @@ function renderCharForm(){
     box.style.color = sum>cap ? 'var(--dmg)' : 'var(--muted)';
   }
 
-  // stat sliders
+  // stat sliders <-> number inputs (synced both ways)
   qa('input[type=range]', panel).forEach(inp=>{
     inp.addEventListener('input', ()=>{
-      q(`[data-statval="${inp.dataset.stat}"]`, panel).textContent = inp.value;
+      q(`[data-statnum="${inp.dataset.stat}"]`, panel).value = inp.value;
+      updateStatTotal();
+    });
+  });
+  qa('input[data-statnum]', panel).forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      let v = Math.max(0, Math.min(100, +inp.value||0));
+      q(`input[type=range][data-stat="${inp.dataset.statnum}"]`, panel).value = v;
       updateStatTotal();
     });
   });
@@ -378,16 +403,45 @@ function renderCharForm(){
     const c = q('#f-skills', panel);
     c.innerHTML = '';
     state.skillDraft.forEach((s,i)=>{
-      const row = el(`<div class="skill-row">
-        <input type="text" placeholder="스킬명" value="${escapeHtml(s.name)}" data-si="${i}" data-sf="name">
-        <input type="text" class="dice" placeholder="2d6" value="${escapeHtml(s.dice)}" data-si="${i}" data-sf="dice">
-        ${state.skillDraft.length>1 ? `<button class="rmv" data-rmv="${i}">✕</button>` : ''}
+      const block = el(`<div class="skill-block">
+        ${state.skillDraft.length>1 ? `<button class="sb-rmv" data-rmv="${i}">✕</button>` : ''}
+        <div class="sb-grid">
+          <div class="sb-field"><label>연동 스탯</label>
+            <select data-si="${i}" data-sf="stat">
+              ${Object.entries(STAT_LABEL).map(([k,label])=>`<option value="${k}" ${s.stat===k?'selected':''}>${label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="sb-field sb-wide"><label>스킬명</label>
+            <input type="text" placeholder="스킬명" value="${escapeHtml(s.name)}" data-si="${i}" data-sf="name">
+          </div>
+          <div class="sb-field"><label>등급</label>
+            <select data-si="${i}" data-sf="grade">
+              ${RANK_ORDER.map(r=>`<option value="${r}" ${s.grade===r?'selected':''}>${r}급</option>`).join('')}
+            </select>
+          </div>
+          <div class="sb-field sb-full"><label>설명</label>
+            <input type="text" placeholder="스킬 설명" value="${escapeHtml(s.desc)}" data-si="${i}" data-sf="desc">
+          </div>
+          <div class="sb-field sb-wide"><label>부가효과</label>
+            <input type="text" placeholder="예: 3턴간 화상" value="${escapeHtml(s.effect)}" data-si="${i}" data-sf="effect">
+          </div>
+          <div class="sb-field"><label>쿨타임(턴)</label>
+            <input type="number" min="0" max="10" value="${s.cooldown ?? 2}" data-si="${i}" data-sf="cooldown">
+          </div>
+          <div class="sb-field"><label>판정(주사위)</label>
+            <input type="text" class="dice" placeholder="2d6" value="${escapeHtml(s.formula)}" data-si="${i}" data-sf="formula">
+          </div>
+          <div class="sb-field"><label>수치(고정보너스)</label>
+            <input type="number" value="${s.bonus ?? 0}" data-si="${i}" data-sf="bonus">
+          </div>
+        </div>
       </div>`);
-      c.appendChild(row);
+      c.appendChild(block);
     });
     qa('[data-si]', c).forEach(inp=>{
       inp.addEventListener('input', ()=>{
-        state.skillDraft[+inp.dataset.si][inp.dataset.sf] = inp.value;
+        const i = +inp.dataset.si, f = inp.dataset.sf;
+        state.skillDraft[i][f] = (inp.type==='number') ? (+inp.value||0) : inp.value;
       });
     });
     qa('[data-rmv]', c).forEach(btn=>{
@@ -400,7 +454,7 @@ function renderCharForm(){
   renderSkillRows();
   q('#add-skill', panel).addEventListener('click', ()=>{
     if(state.skillDraft.length>=5) return;
-    state.skillDraft.push({name:'',dice:'1d6'});
+    state.skillDraft.push({stat:'sp', name:'', grade:'C', desc:'', effect:'', cooldown:2, formula:'1d6', bonus:0});
     renderSkillRows();
   });
 
@@ -443,14 +497,23 @@ function renderCharForm(){
     const total = Object.values(stats).reduce((s,v)=>s+v,0);
     const cap = RANK_STAT_CAP[rank];
     if(total>cap){ showToast(`스탯 합산이 상한(${cap})을 초과했습니다. 현재 ${total}`); return; }
-    const skills = state.skillDraft.filter(s=>s.name.trim()).map(s=>({name:s.name.trim(), dice: s.dice.trim()||'1d6'}));
+    const skills = state.skillDraft.filter(s=>s.name.trim()).map(s=>({
+      stat: s.stat||'sp',
+      name: s.name.trim(),
+      grade: s.grade||'C',
+      desc: (s.desc||'').trim(),
+      effect: (s.effect||'').trim(),
+      cooldown: Math.max(0, +s.cooldown||0),
+      formula: (s.formula||'1d6').trim()||'1d6',
+      bonus: +s.bonus||0
+    }));
     const passives = state.passiveDraft.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(), desc:p.desc.trim()}));
     const trait = rank==='S' ? { name: q('#f-trait-name', panel).value.trim(), desc: q('#f-trait-desc', panel).value.trim() } : null;
 
     const char = { id: uid(), name, rank, stats, skills, passives, trait };
     state.characters.push(char);
     await saveCharacters();
-    state.skillDraft = [{name:'',dice:'1d6'}];
+    state.skillDraft = [{stat:'sp', name:'', grade:'C', desc:'', effect:'', cooldown:2, formula:'1d6', bonus:0}];
     state.passiveDraft = [{name:'',desc:''}];
     showToast(`${name} 등록 완료`);
     render();
@@ -657,11 +720,16 @@ function runBattle(a, b){
     Object.keys(cooldown[attacker.id]).forEach(k=>{ if(cooldown[attacker.id][k]>0) cooldown[attacker.id][k]--; });
     const availSkills = (attacker.skills||[]).filter(s=>cooldown[attacker.id][s.name]===0);
     let useSkill = availSkills.length>0 && Math.random()<0.6;
-    let statKey, diceFormula, actionName;
+    let statKey, diceFormula, actionName, gradeBonus=0, flatBonus=0, effectText='';
     if(useSkill){
       const s = availSkills[Math.floor(Math.random()*availSkills.length)];
-      statKey='sp'; diceFormula=s.dice; actionName=s.name;
-      cooldown[attacker.id][s.name]=2;
+      statKey = s.stat || 'sp';
+      diceFormula = s.formula || '1d6';
+      actionName = s.name;
+      gradeBonus = GRADE_BONUS[s.grade] ?? 0;
+      flatBonus = s.bonus || 0;
+      effectText = s.effect || '';
+      cooldown[attacker.id][s.name] = s.cooldown ?? 2;
     } else {
       statKey='str'; diceFormula='1d6'; actionName='기본공격';
     }
@@ -673,7 +741,7 @@ function runBattle(a, b){
     }
 
     const atkRoll = rollD100();
-    const atkStat = Math.min(100, attacker.stats[statKey] + traitBonus);
+    const atkStat = Math.min(100, attacker.stats[statKey] + traitBonus + gradeBonus);
     const atkDeg = degree(atkRoll, atkStat);
 
     if(atkDeg==='fail' || atkDeg==='fumble'){
@@ -689,8 +757,9 @@ function runBattle(a, b){
       return;
     }
 
-    let dmg = rollDice(diceFormula);
+    let dmg = rollDice(diceFormula) + flatBonus;
     if(statKey==='str') dmg += Math.floor(attacker.stats.str/10);
+    else if(useSkill) dmg += Math.floor(attacker.stats[statKey]/15);
     if(traitDice) dmg += rollDice(traitDice);
     if(atkDeg==='critical') dmg = Math.floor(dmg*2);
     else if(atkDeg==='hard') dmg = Math.floor(dmg*1.5);
@@ -699,7 +768,8 @@ function runBattle(a, b){
     hp[defender.id] = Math.max(0, hp[defender.id]-dmg);
 
     const cls = atkDeg==='critical' ? 'crit' : 'dmg';
-    log.push({type:cls, text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}, d100:${atkRoll}) → ${defender.name}에게 ${dmg} 데미지! (방어 ${DEG_LABEL[defDeg]}, 경감 ${mitig})`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
+    const effectNote = effectText ? ` (부가효과: ${effectText})` : '';
+    log.push({type:cls, text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}, d100:${atkRoll}) → ${defender.name}에게 ${dmg} 데미지!${effectNote} (방어 ${DEG_LABEL[defDeg]}, 경감 ${mitig})`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
   }
 }
 
