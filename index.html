@@ -774,14 +774,71 @@ function runBattle(a, b){
 }
 
 // ---------- BATTLE TAB ----------
+function pendingMatchesList(){
+  if(!state.bracket) return [];
+  const total = state.bracket.rounds.length;
+  const list = [];
+  state.bracket.rounds.forEach((round, ri)=>{
+    round.forEach(m=>{
+      if(m.p1 && m.p2 && m.p1!=='TBD' && m.p2!=='TBD' && !m.winner){
+        const label = ri===total-1 ? '결승' : (ri===total-2 ? '준결승' : `${ri+1}라운드`);
+        list.push({ m, label });
+      }
+    });
+  });
+  return list;
+}
+
 function renderBattleTab(){
-  const wrap = el(`<div class="panel"></div>`);
-  wrap.appendChild(el(`<h2 class="section">전투 시뮬레이터</h2>`));
+  const wrap = el(`<div></div>`);
+  wrap.appendChild(el(`<h2 class="section" style="padding:0 4px">전투 시뮬레이터</h2>`));
 
   if(state.characters.length<2){
-    wrap.appendChild(el(`<div class="empty">전투를 시뮬레이션하려면 헌터가 2명 이상 필요합니다.</div>`));
+    const p = el(`<div class="panel"></div>`);
+    p.appendChild(el(`<div class="empty">전투를 시뮬레이션하려면 헌터가 2명 이상 필요합니다.</div>`));
+    wrap.appendChild(p);
     return wrap;
   }
+
+  const pending = pendingMatchesList();
+
+  // ---- Queue panel (auto-run bracket matches in order) ----
+  if(state.bracket){
+    const queuePanel = el(`<div class="panel" style="margin-bottom:16px"></div>`);
+    const nextLabel = pending.length
+      ? `다음 매치 실행 → ${escapeHtml(charById(pending[0].m.p1).name)} VS ${escapeHtml(charById(pending[0].m.p2).name)}`
+      : '대기 중인 매치가 없습니다';
+    queuePanel.appendChild(el(`<div class="toolbar">
+      <h2 class="section" style="margin:0">대진표 순서대로 진행</h2>
+      <span class="count-badge">대기 중 ${pending.length}매치</span>
+    </div>`));
+    queuePanel.appendChild(el(`<div class="hint" style="margin-top:-6px">버튼을 누르면 대진표 순서대로 다음 상대가 자동으로 정해지고, 전투가 끝나면 바로 대진표에 결과가 반영돼요. 목록에서 특정 매치를 바로 클릭해서 순서를 건너뛸 수도 있어요.</div>`));
+    const runNextBtn = el(`<button class="btn gold" id="run-next-match" ${pending.length?'':'disabled'}>${nextLabel}</button>`);
+    queuePanel.appendChild(runNextBtn);
+
+    if(pending.length){
+      const list = el(`<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;max-height:260px;overflow-y:auto"></div>`);
+      pending.forEach(({m,label},idx)=>{
+        const p1 = charById(m.p1), p2 = charById(m.p2);
+        const row = el(`<div class="match" data-qidx="${idx}" style="cursor:pointer">
+          <div class="round-title" style="text-align:left;margin-bottom:4px">${label}</div>
+          <div class="slot"><span>${escapeHtml(p1.name)}</span><span class="rank-badge" style="width:16px;height:16px;font-size:9px;color:${RANK_COLOR[p1.rank]}">${p1.rank}</span></div>
+          <div class="vs">VS</div>
+          <div class="slot"><span>${escapeHtml(p2.name)}</span><span class="rank-badge" style="width:16px;height:16px;font-size:9px;color:${RANK_COLOR[p2.rank]}">${p2.rank}</span></div>
+        </div>`);
+        row.addEventListener('click', ()=> runMatch(m));
+        list.appendChild(row);
+      });
+      queuePanel.appendChild(list);
+    }
+    wrap.appendChild(queuePanel);
+    runNextBtn.addEventListener('click', ()=>{ if(pending.length) runMatch(pending[0].m); });
+  }
+
+  // ---- Manual / free-spar panel ----
+  const battlePanel = el(`<div class="panel"></div>`);
+  wrap.appendChild(battlePanel);
+  battlePanel.appendChild(el(`<h2 class="section">전투 시뮬레이터</h2>`));
 
   const sel1 = state.battleSel[0] || state.characters[0].id;
   const sel2 = state.battleSel[1] || (state.characters[1] ? state.characters[1].id : state.characters[0].id);
@@ -792,7 +849,7 @@ function renderBattleTab(){
     <select id="sel-b">${state.characters.map(c=>`<option value="${c.id}" ${c.id===sel2?'selected':''}>${escapeHtml(c.name)} (${c.rank})</option>`).join('')}</select>
     <button class="btn gold" id="run-battle">전투 시작</button>
   </div>`);
-  wrap.appendChild(selectRow);
+  battlePanel.appendChild(selectRow);
 
   q('#sel-a', selectRow).addEventListener('change', e=>{ state.battleSel[0]=e.target.value; });
   q('#sel-b', selectRow).addEventListener('change', e=>{ state.battleSel[1]=e.target.value; });
@@ -802,10 +859,10 @@ function renderBattleTab(){
     <div class="arena-center"><span class="vs-mark">⚔</span></div>
     <div class="fighter right" id="fighter-b"></div>
   </div>`);
-  wrap.appendChild(arena);
+  battlePanel.appendChild(arena);
 
   const logBox = el(`<div class="log-scroll" id="log-box"><div class="hint" style="margin:0">전투 시작 버튼을 누르면 판정 로그가 표시됩니다.</div></div>`);
-  wrap.appendChild(logBox);
+  battlePanel.appendChild(logBox);
 
   function paintFighters(a,b, hpA, hpB, maxA, maxB){
     const pctA = Math.max(0,Math.round(hpA/maxA*100));
@@ -821,19 +878,34 @@ function renderBattleTab(){
   const cA = charById(sel1), cB = charById(sel2);
   if(cA && cB) paintFighters(cA, cB, cA.stats.hp*3, cB.stats.hp*3, cA.stats.hp*3, cB.stats.hp*3);
 
-  q('#run-battle', arena.parentElement || wrap).addEventListener('click', async ()=>{
+  q('#run-battle', selectRow).addEventListener('click', async ()=>{
     const aId = q('#sel-a', selectRow).value, bId = q('#sel-b', selectRow).value;
     if(aId===bId){ showToast('서로 다른 헌터를 선택해주세요'); return; }
     const a = charById(aId), b = charById(bId);
     const result = runBattle(a,b);
-    await playLog(result, a, b, logBox, arena, aId===state.battleSel[0] && bId===state.battleSel[1]);
+    await playLog(result, a, b, logBox, arena, false);
   });
 
   return wrap;
 
-  async function playLog(result, a, b, logBox, arena){
+  async function runMatch(m){
+    const a = charById(m.p1), b = charById(m.p2);
+    if(!a || !b) return;
+    state.battleSel = [a.id, b.id];
+    state.activeMatchRef = m.id;
+    state.tab = 'battle';
+    q('#sel-a', selectRow).value = a.id;
+    q('#sel-b', selectRow).value = b.id;
+    const result = runBattle(a,b);
+    await playLog(result, a, b, logBox, arena, true);
+    render();
+  }
+
+  async function playLog(result, a, b, logBox, arena, autoApply){
     const btn = q('#run-battle');
     if(btn) btn.disabled = true;
+    const runNextBtn = q('#run-next-match');
+    if(runNextBtn) runNextBtn.disabled = true;
     logBox.innerHTML = '';
     for(const entry of result.log){
       const line = el(`<div class="log-line ${entry.type}"><span class="tag">${entry.type.toUpperCase()}</span>${escapeHtml(entry.text)}</div>`);
@@ -844,22 +916,30 @@ function renderBattleTab(){
     }
     if(btn) btn.disabled = false;
 
-    // if this pairing matches an unresolved bracket match, offer to record
+    // if this pairing matches an unresolved bracket match, record the result
     if(state.bracket && state.activeMatchRef){
       const allMatches = state.bracket.rounds.flat();
       const m = allMatches.find(x=>x.id===state.activeMatchRef && !x.winner && ((x.p1===a.id&&x.p2===b.id)||(x.p1===b.id&&x.p2===a.id)));
       if(m){
-        const applyBtn = el(`<button class="btn gold" style="margin-top:10px">결과를 대진표에 반영</button>`);
-        logBox.parentElement.appendChild(applyBtn);
-        applyBtn.addEventListener('click', async ()=>{
+        if(autoApply){
           m.winner = result.winner;
           propagate(state.bracket.rounds);
           await saveBracket();
           state.activeMatchRef = null;
-          showToast('대진표에 결과가 반영되었습니다');
-          state.tab='bracket';
-          render();
-        });
+          const winChar = charById(result.winner);
+          showToast(`${winChar.name} 승리 — 대진표에 자동 반영됨`);
+        } else {
+          const applyBtn = el(`<button class="btn gold" style="margin-top:10px">결과를 대진표에 반영</button>`);
+          logBox.parentElement.appendChild(applyBtn);
+          applyBtn.addEventListener('click', async ()=>{
+            m.winner = result.winner;
+            propagate(state.bracket.rounds);
+            await saveBracket();
+            state.activeMatchRef = null;
+            showToast('대진표에 결과가 반영되었습니다');
+            render();
+          });
+        }
       }
     }
   }
