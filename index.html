@@ -812,9 +812,13 @@ function renderBattleTab(){
       <h2 class="section" style="margin:0">대진표 순서대로 진행</h2>
       <span class="count-badge">대기 중 ${pending.length}매치</span>
     </div>`));
-    queuePanel.appendChild(el(`<div class="hint" style="margin-top:-6px">버튼을 누르면 대진표 순서대로 다음 상대가 자동으로 정해지고, 전투가 끝나면 바로 대진표에 결과가 반영돼요. 목록에서 특정 매치를 바로 클릭해서 순서를 건너뛸 수도 있어요.</div>`));
+    queuePanel.appendChild(el(`<div class="hint" style="margin-top:-6px">"다음 매치 실행"은 한 매치씩, "이번 라운드 동시 진행"은 같은 라운드의 모든 매치를 동시에 애니메이션으로 진행해요. 라운드가 끝나면 버튼을 다시 눌러 다음 라운드를 진행하면 됩니다.</div>`));
     const runNextBtn = el(`<button class="btn gold" id="run-next-match" ${pending.length?'':'disabled'}>${nextLabel}</button>`);
     queuePanel.appendChild(runNextBtn);
+    const runAllBtn = el(`<button class="btn ghost" id="run-all-matches" style="margin-left:8px" ${pending.length?'':'disabled'}>이번 라운드 ${pending.length}매치 동시 진행</button>`);
+    queuePanel.appendChild(runAllBtn);
+    const parallelGrid = el(`<div id="parallel-grid" style="margin-top:14px"></div>`);
+    queuePanel.appendChild(parallelGrid);
 
     if(pending.length){
       const list = el(`<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;max-height:260px;overflow-y:auto"></div>`);
@@ -833,6 +837,7 @@ function renderBattleTab(){
     }
     wrap.appendChild(queuePanel);
     runNextBtn.addEventListener('click', ()=>{ if(pending.length) runMatch(pending[0].m); });
+    runAllBtn.addEventListener('click', ()=> runParallelRound(pending, parallelGrid, queuePanel));
   }
 
   // ---- Manual / free-spar panel ----
@@ -887,6 +892,70 @@ function renderBattleTab(){
   });
 
   return wrap;
+
+  async function runParallelRound(pending, gridEl, queuePanel){
+    if(!pending.length) return;
+    const runAllBtn = q('#run-all-matches');
+    const runNextBtn = q('#run-next-match');
+    if(runAllBtn){ runAllBtn.disabled = true; runAllBtn.textContent = '진행 중…'; }
+    if(runNextBtn) runNextBtn.disabled = true;
+
+    gridEl.innerHTML = '';
+    gridEl.style.display = 'grid';
+    gridEl.style.gridTemplateColumns = 'repeat(auto-fit, minmax(280px, 1fr))';
+    gridEl.style.gap = '14px';
+
+    function paintMini(matchId, a, b, hpA, hpB, maxA, maxB){
+      const pctA = Math.max(0,Math.round(hpA/maxA*100));
+      const pctB = Math.max(0,Math.round(hpB/maxB*100));
+      const fa = q(`#pf-a-${matchId}`), fb = q(`#pf-b-${matchId}`);
+      if(fa) fa.innerHTML = `<div class="fname" style="font-size:12.5px">${escapeHtml(a.name)} <span style="color:${RANK_COLOR[a.rank]};font-size:10px">${a.rank}급</span></div>
+        <div class="hp-bar ${pctA<30?'low':''}"><i style="width:${pctA}%"></i></div>
+        <div class="hp-text">HP ${hpA} / ${maxA}</div>`;
+      if(fb) fb.innerHTML = `<div class="fname" style="font-size:12.5px">${escapeHtml(b.name)} <span style="color:${RANK_COLOR[b.rank]};font-size:10px">${b.rank}급</span></div>
+        <div class="hp-bar ${pctB<30?'low':''}"><i style="width:${pctB}%"></i></div>
+        <div class="hp-text">HP ${hpB} / ${maxB}</div>`;
+    }
+
+    const jobs = pending.map(({m,label})=>{
+      const p1 = charById(m.p1), p2 = charById(m.p2);
+      const block = el(`<div class="panel" style="padding:14px">
+        <div style="font-family:var(--font-display);font-size:12px;color:var(--star);margin-bottom:8px">${label} · ${escapeHtml(p1.name)} VS ${escapeHtml(p2.name)}</div>
+        <div class="arena" style="margin-bottom:10px">
+          <div class="fighter" id="pf-a-${m.id}"></div>
+          <div class="arena-center"><span class="vs-mark" style="font-size:13px">⚔</span></div>
+          <div class="fighter right" id="pf-b-${m.id}"></div>
+        </div>
+        <div class="log-scroll" id="pl-${m.id}" style="max-height:170px;font-size:11.5px"></div>
+      </div>`);
+      gridEl.appendChild(block);
+      return { m, p1, p2 };
+    });
+
+    async function animateOne({m,p1,p2}){
+      const result = runBattle(p1,p2);
+      const maxA = result.maxHpA, maxB = result.maxHpB;
+      paintMini(m.id, p1, p2, maxA, maxB, maxA, maxB);
+      const logEl = q(`#pl-${m.id}`);
+      for(const entry of result.log){
+        if(logEl){
+          const line = el(`<div class="log-line ${entry.type}"><span class="tag">${entry.type.toUpperCase()}</span>${escapeHtml(entry.text)}</div>`);
+          logEl.appendChild(line);
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+        paintMini(m.id, p1, p2, entry.hpA, entry.hpB, maxA, maxB);
+        await new Promise(r=>setTimeout(r, 260));
+      }
+      m.winner = result.winner;
+    }
+
+    await Promise.all(jobs.map(j=>animateOne(j)));
+    propagate(state.bracket.rounds);
+    await saveBracket();
+    showToast(`이번 라운드 ${jobs.length}매치가 모두 종료되었습니다`);
+    state.activeMatchRef = null;
+    render();
+  }
 
   async function runMatch(m){
     const a = charById(m.p1), b = charById(m.p2);
