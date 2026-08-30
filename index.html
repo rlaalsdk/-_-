@@ -696,7 +696,7 @@ function runBattle(a, b){
 
   log.push({type:'info', text:`선공: ${order[0].name} (민첩 ${order[0].stats.agi})`, hpA:hp[a.id], hpB:hp[b.id]});
 
-  let turn=0; const MAX_TURNS=40;
+  let turn=0; const MAX_TURNS=150;
   while(hp[a.id]>0 && hp[b.id]>0 && turn<MAX_TURNS){
     for(const attacker of order){
       if(hp[a.id]<=0 || hp[b.id]<=0) break;
