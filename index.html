@@ -194,7 +194,8 @@ const RANK_COLOR = { S:'#FF3B30', A:'#E63946', B:'#C81E3A', C:'#A31621', D:'#7A1
 const RANK_ORDER = ['S','A','B','C','D','F'];
 const RANK_STAT_CAP = { S:400, A:350, B:310, C:290, D:270, F:250 };
 const GRADE_BONUS = { S:15, A:10, B:5, C:0, D:-5, F:-10 };
-const STAT_LABEL = { sp:'이능력', agi:'민첩', hp:'체력', str:'근력', def:'방어' };
+const STAT_LABEL = { sp:'이능력', agi:'민첩', int:'지능', str:'근력', def:'방어' };
+const BASE_HP = 100; // 체력은 우선 전원 고정값
 
 function uid(){ return Math.random().toString(36).slice(2,10)+Date.now().toString(36); }
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; }
@@ -295,7 +296,10 @@ function renderCharCard(c){
     <button class="cc-del" title="삭제">✕</button>
     <div class="cc-head">
       <span class="cc-name">${escapeHtml(c.name)}</span>
-      <span class="rank-badge" style="color:${rc}">${c.rank}</span>
+      <span style="display:flex;align-items:center;gap:6px">
+        <span class="chip" style="font-family:var(--font-mono)">HP ${BASE_HP}</span>
+        <span class="rank-badge" style="color:${rc}">${c.rank}</span>
+      </span>
     </div>
     <div class="cc-stats">
       ${Object.entries(STAT_LABEL).map(([k,label])=>`
@@ -331,7 +335,7 @@ function renderCharForm(){
   state.passiveDraft = state.passiveDraft && state.passiveDraft.length ? state.passiveDraft : [{name:'',desc:''}];
   const panel = el(`<div class="panel">
     <h2 class="section">새 헌터 등록</h2>
-    <div class="hint">스탯은 0~100 범위, 등급은 S/A/B/C/D/F. 등급별 스탯 합산 상한: S 400 · A 350 · B 300 · C 270 · D 250 · F 220. 액티브 스킬·패시브 스킬 각각 최대 5개까지 등록 가능합니다. 판정 칸의 주사위 표기는 "2d6" 형식으로 입력하세요.</div>
+    <div class="hint">스탯 5종은 0~100 범위, 체력은 별도 항목 없이 전원 고정 HP ${BASE_HP}입니다. 민첩=회피 판정 · 방어=내구력(피해 경감) · 근력=물리 공격 · 이능력=보정 판정(스킬 명중) · 지능=스킬 실패를 성공으로 전환. 등급별 스탯 합산 상한: S 400 · A 350 · B 310 · C 290 · D 270 · F 250. 액티브 스킬·패시브 스킬 각각 최대 5개까지 등록 가능합니다. 판정 칸의 주사위 표기는 "2d6" 형식으로 입력하세요.</div>
     <div class="grid2">
       <div class="field"><label>이름</label><input type="text" id="f-name" placeholder="헌터 이름"></div>
       <div class="field"><label>등급</label>
@@ -709,7 +713,7 @@ const DEG_RANK = { fumble:-1, fail:0, success:1, hard:2, critical:3 };
 const DEG_LABEL = { fumble:'펌블', fail:'실패', success:'성공', hard:'하드성공', critical:'크리티컬' };
 
 function runBattle(a, b){
-  const maxHp = { [a.id]: a.stats.hp*3, [b.id]: b.stats.hp*3 };
+  const maxHp = { [a.id]: BASE_HP, [b.id]: BASE_HP };
   const hp = { [a.id]: maxHp[a.id], [b.id]: maxHp[b.id] };
   const cooldown = { [a.id]:{}, [b.id]:{} };
   (a.skills||[]).forEach(s=>cooldown[a.id][s.name]=0);
@@ -769,7 +773,18 @@ function runBattle(a, b){
 
     const atkRoll = rollD100();
     const atkStat = Math.min(100, attacker.stats[statKey] + traitBonus + gradeBonus);
-    const atkDeg = degree(atkRoll, atkStat);
+    let atkDeg = degree(atkRoll, atkStat);
+
+    if(atkDeg==='fail' && useSkill){
+      const intRoll = rollD100();
+      const intDeg = degree(intRoll, attacker.stats.int);
+      if(intDeg!=='fail' && intDeg!=='fumble'){
+        log.push({type:'trait', text:`💡 ${attacker.name}의 지능 보정 (d100:${intRoll} vs ${attacker.stats.int}) 성공 → [${actionName}] 실패가 성공으로 전환됨!`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
+        atkDeg = 'success';
+      } else {
+        log.push({type:'miss', text:`${attacker.name}의 지능 보정 시도 실패 (d100:${intRoll} vs ${attacker.stats.int})`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
+      }
+    }
 
     if(atkDeg==='fail' || atkDeg==='fumble'){
       log.push({type:'miss', text:`${attacker.name}의 [${actionName}] — d100:${atkRoll} vs ${atkStat} → ${DEG_LABEL[atkDeg]}. 빗나감.`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
@@ -777,10 +792,10 @@ function runBattle(a, b){
     }
 
     const defRoll = rollD100();
-    const defDeg = degree(defRoll, defender.stats.def);
+    const defDeg = degree(defRoll, defender.stats.agi);
 
     if(DEG_RANK[defDeg] >= DEG_RANK[atkDeg]){
-      log.push({type:'evade', text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}) → ${defender.name}가 방어(${DEG_LABEL[defDeg]})로 완전히 막아냄.`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
+      log.push({type:'evade', text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}) → ${defender.name}가 민첩 회피(${DEG_LABEL[defDeg]})로 완전히 피함.`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
       return;
     }
 
@@ -790,13 +805,13 @@ function runBattle(a, b){
     if(traitDice) dmg += rollDice(traitDice);
     if(atkDeg==='critical') dmg = Math.floor(dmg*2);
     else if(atkDeg==='hard') dmg = Math.floor(dmg*1.5);
-    const mitig = DEG_RANK[defDeg]>=1 ? Math.floor(defender.stats.def/10) : Math.floor(defender.stats.def/20);
+    const mitig = Math.floor(defender.stats.def/10);
     dmg = Math.max(1, dmg-mitig);
     hp[defender.id] = Math.max(0, hp[defender.id]-dmg);
 
     const cls = atkDeg==='critical' ? 'crit' : 'dmg';
     const effectNote = effectText ? ` (부가효과: ${effectText})` : '';
-    log.push({type:cls, text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}, d100:${atkRoll}) → ${defender.name}에게 ${dmg} 데미지!${effectNote} (방어 ${DEG_LABEL[defDeg]}, 경감 ${mitig})`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
+    log.push({type:cls, text:`${attacker.name}의 [${actionName}] (${DEG_LABEL[atkDeg]}, d100:${atkRoll}) → ${defender.name}에게 ${dmg} 데미지!${effectNote} (회피판정 ${DEG_LABEL[defDeg]}, 내구 경감 ${mitig})`, hpA:Math.max(hp[a.id],0), hpB:Math.max(hp[b.id],0)});
   }
 }
 
@@ -908,7 +923,7 @@ function renderBattleTab(){
   }
 
   const cA = charById(sel1), cB = charById(sel2);
-  if(cA && cB) paintFighters(cA, cB, cA.stats.hp*3, cB.stats.hp*3, cA.stats.hp*3, cB.stats.hp*3);
+  if(cA && cB) paintFighters(cA, cB, BASE_HP, BASE_HP, BASE_HP, BASE_HP);
 
   q('#run-battle', selectRow).addEventListener('click', async ()=>{
     const aId = q('#sel-a', selectRow).value, bId = q('#sel-b', selectRow).value;
